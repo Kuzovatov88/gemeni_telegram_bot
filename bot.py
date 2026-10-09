@@ -22,8 +22,14 @@ async def main():
     # Запускаем веб-сервер для прохождения проверки портов Render
     await start_web_server()
     
+    # Читаем токен из переменных окружения Render
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    
+    if not bot_token:
+        raise ValueError("Ошибка: Переменная TELEGRAM_BOT_TOKEN не найдена в окружении!")
+
     # Инициализируем и запускаем бота
-    application = ApplicationBuilder().token("TELEGRAM_BOT_TOKEN").build()
+    application = ApplicationBuilder().token(bot_token).build()
     
     # Настройка ваших хэндлеров здесь:
     # application.add_handler(...)
