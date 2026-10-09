@@ -9,10 +9,10 @@ import google.generativeai as genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Используем актуальное имя модели
+    # Используем актуальную модель Gemini
     model = genai.GenerativeModel('gemini-3.8-flash')
 
-# Простой обработчик для Render Health Check
+# Веб-сервер для Render Health Check
 async def handle_health_check(request):
     return web.Response(text="Bot is active")
 
@@ -26,24 +26,53 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# Обработчик команды /start
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я готов к работе. Напиши мне любой вопрос, и я отвечу через Gemini!")
+    await update.message.reply_text(
+        "Привет! Я готов к работе.\n\n"
+        "Вы можете отправить мне:\n"
+        "• Текстовый вопрос\n"
+        "• Фотографию или скриншот (с вопросом в подписи или без)\n"
+        "• Документ (PDF, картинка)"
+    )
 
-# Обработчик текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    
+# Обработчик текста, фото и документов
+async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not GEMINI_API_KEY:
         await update.message.reply_text("Ошибка: GEMINI_API_KEY не настроен на сервере.")
         return
 
+    # Сообщение о начале обработки
+    status_msg = await update.message.reply_text("Думаю над ответом...")
+
     try:
-        # Отправка запроса в Gemini
-        response = model.generate_content(user_text)
-        await update.message.reply_text(response.text)
+        prompt = update.message.caption or update.message.text or "Опиши и проанализируй это изображение/документ."
+        contents = []
+
+        # Если отправлено фото
+        if update.message.photo:
+            photo_file = await update.message.photo[-1].get_file()
+            image_bytes = await photo_file.download_as_bytearray()
+            contents.append({'mime_type': 'image/jpeg', 'data': bytes(image_bytes)})
+
+        # Если отправлен документ (например, PDF или фото как файл)
+        elif update.message.document:
+            doc = update.message.document
+            doc_file = await doc.get_file()
+            file_bytes = await doc_file.download_as_bytearray()
+            contents.append({'mime_type': doc.mime_type, 'data': bytes(file_bytes)})
+
+        # Добавляем текстовый запрос
+        contents.append(prompt)
+
+        # Запрос к Gemini
+        response = model.generate_content(contents)
+        
+        # Обновляем статус с ответом
+        await status_msg.edit_text(response.text)
+
     except Exception as e:
-        await update.message.reply_text(f"Произошла ошибка при обращении к Gemini: {e}")
+        await status_msg.edit_text(f"Произошла ошибка при обработке: {e}")
 
 async def main():
     await start_web_server()
@@ -54,9 +83,12 @@ async def main():
 
     application = ApplicationBuilder().token(bot_token).build()
     
-    # Регистрируем обработчики команд и сообщений
+    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Принимаем текст, фото и документы
+    media_filter = filters.TEXT | filters.PHOTO | filters.Document.ALL
+    application.add_handler(MessageHandler(media_filter & ~filters.COMMAND, handle_content))
 
     async with application:
         await application.start()
