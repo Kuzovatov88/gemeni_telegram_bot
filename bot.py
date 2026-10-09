@@ -3,6 +3,7 @@ import asyncio
 from aiohttp import web
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
 import google.generativeai as genai
 
 # Настройка Gemini API
@@ -33,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Вы можете отправить мне:\n"
         "• Текстовый вопрос\n"
         "• Фотографию или скриншот (с вопросом в подписи или без)\n"
-        "• Документ (PDF, картинка)"
+        "• Документ (PDF, картинку)"
     )
 
 # Обработчик текста, фото и документов
@@ -42,15 +43,6 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка: GEMINI_API_KEY не настроен на сервере.")
         return
 
-# При отправке ответа от Gemini добавьте parse_mode:
-try:
-    response = model.generate_content(contents)
-    # Telegram отобразит **текст** как жирный, а не как звёздочки:
-    await status_msg.edit_text(response.text, parse_mode='Markdown')
-except Exception as e:
-    # Если Markdown выдаст ошибку разметки, отправляем как обычный текст
-    await status_msg.edit_text(response.text)
-    
     # Сообщение о начале обработки
     status_msg = await update.message.reply_text("Думаю над ответом...")
 
@@ -64,7 +56,7 @@ except Exception as e:
             image_bytes = await photo_file.download_as_bytearray()
             contents.append({'mime_type': 'image/jpeg', 'data': bytes(image_bytes)})
 
-        # Если отправлен документ (например, PDF или фото как файл)
+        # Если отправлен документ (например, PDF или фото файлом)
         elif update.message.document:
             doc = update.message.document
             doc_file = await doc.get_file()
@@ -77,8 +69,13 @@ except Exception as e:
         # Запрос к Gemini
         response = model.generate_content(contents)
         
-        # Обновляем статус с ответом
-        await status_msg.edit_text(response.text)
+        # Пробуем отправить с форматированием Markdown
+        try:
+            await status_msg.edit_text(response.text, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            # Если в тексте ответов Gemini встретятся неэкранированные символы Markdown,
+            # отправляем обычным текстом, чтобы сообщение не потерялось
+            await status_msg.edit_text(response.text)
 
     except Exception as e:
         await status_msg.edit_text(f"Произошла ошибка при обработке: {e}")
