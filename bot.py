@@ -23,7 +23,7 @@ async def main():
     await start_web_server()
     
     # Инициализируем и запускаем бота
-    application = ApplicationBuilder().token("YOUR_TELEGRAM_BOT_TOKEN").build()
+    application = ApplicationBuilder().token("TELEGRAM_BOT_TOKEN").build()
     
     # Настройка ваших хэндлеров здесь:
     # application.add_handler(...)
