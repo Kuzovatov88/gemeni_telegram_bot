@@ -42,6 +42,15 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка: GEMINI_API_KEY не настроен на сервере.")
         return
 
+# При отправке ответа от Gemini добавьте parse_mode:
+try:
+    response = model.generate_content(contents)
+    # Telegram отобразит **текст** как жирный, а не как звёздочки:
+    await status_msg.edit_text(response.text, parse_mode='Markdown')
+except Exception as e:
+    # Если Markdown выдаст ошибку разметки, отправляем как обычный текст
+    await status_msg.edit_text(response.text)
+    
     # Сообщение о начале обработки
     status_msg = await update.message.reply_text("Думаю над ответом...")
 
