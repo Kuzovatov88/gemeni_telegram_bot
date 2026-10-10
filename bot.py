@@ -10,7 +10,9 @@ import google.generativeai as genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-3.6-flash')
+    # Используем проверенную, стабильную модель с высокими лимитами!
+    # Вы можете заменить на 'gemini-1.5-flash' или 'gemini-3-flash'
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
 # Веб-сервер для прохождения Render Health Check
 async def handle_health_check(request):
@@ -37,7 +39,7 @@ async def send_long_message(message, text):
         return
 
     # Если текст длиннее 4000 символов, разбиваем его по частям
-    await message.edit_text("Ответ слишком длинный, отправляю частями:\n")
+    await message.edit_text("Ответ слишком длинный, отправляю его по частям:\n")
     
     for i in range(0, len(text), max_length):
         chunk = text[i:i + max_length]
@@ -45,7 +47,8 @@ async def send_long_message(message, text):
             await message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
         except Exception:
             await message.reply_text(chunk)
-        await asyncio.sleep(0.3) # Небольшая пауза между сообщениями
+        # Небольшая пауза, чтобы не превысить лимиты API Telegram на отправку
+        await asyncio.sleep(0.3)
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,49 +72,55 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = update.message.caption or update.message.text or "Опиши и проанализируй это изображение/документ."
         contents = []
 
-        # Если отправлено фото
+        # Если отправлено фото (берем оптимизированный размер)
         if update.message.photo:
             photo_index = -2 if len(update.message.photo) > 1 else -1
             photo_file = await update.message.photo[photo_index].get_file()
             image_bytes = await photo_file.download_as_bytearray()
             contents.append({'mime_type': 'image/jpeg', 'data': bytes(image_bytes)})
 
-        # Если отправлен документ (PDF и др.)
+        # Если отправлен документ (PDF, JPG и др. как файлы)
         elif update.message.document:
             doc = update.message.document
             doc_file = await doc.get_file()
             file_bytes = await doc_file.download_as_bytearray()
             contents.append({'mime_type': doc.mime_type, 'data': bytes(file_bytes)})
 
+        # Добавляем текстовый запрос к списку данных для Gemini
         contents.append(prompt)
 
         # Запрос к Gemini
         response = model.generate_content(contents)
         
-        # Безопасная отправка с разбиением на части
+        # Безопасная отправка ответа (с разбиением на части, если он длинный)
         await send_long_message(status_msg, response.text)
 
     except Exception as e:
         await status_msg.edit_text(f"Произошла ошибка при обработке: {e}")
 
 async def main():
+    # Запускаем локальный веб-сервер для Render
     await start_web_server()
     
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not bot_token:
         raise ValueError("Ошибка: Переменная TELEGRAM_BOT_TOKEN не найдена в окружении!")
 
+    # Инициализация приложения
     application = ApplicationBuilder().token(bot_token).build()
     
+    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     media_filter = filters.TEXT | filters.PHOTO | filters.Document.ALL
     application.add_handler(MessageHandler(media_filter & ~filters.COMMAND, handle_content))
 
-    print("Инициализация и запуск бота...")
+    # Запуск бота и пуллинга (async wait() держит соединение)
+    print("Бот успешно запущен и ожидает сообщений...")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
     
+    # Удержание соединения
     await asyncio.Event().wait()
 
 if __name__ == '__main__':
