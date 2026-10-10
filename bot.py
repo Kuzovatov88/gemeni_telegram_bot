@@ -12,7 +12,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-3.8-flash')
 
-# Веб-сервер для Render Health Check
+# Веб-сервер для прохождения Render Health Check
 async def handle_health_check(request):
     return web.Response(text="Bot is active")
 
@@ -26,6 +26,7 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Я готов к работе.\n\n"
@@ -35,6 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Документ (PDF, картинку)"
     )
 
+# Обработчик текста, фото и документов
 async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not GEMINI_API_KEY:
         await update.message.reply_text("Ошибка: GEMINI_API_KEY не настроен на сервере.")
@@ -46,13 +48,14 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = update.message.caption or update.message.text or "Опиши и проанализируй это изображение/документ."
         contents = []
 
-        # Оптимизация: берем сжатую копию фото, если доступно несколько размеров
+        # Если отправлено фото (берем оптимизированный размер для скорости)
         if update.message.photo:
             photo_index = -2 if len(update.message.photo) > 1 else -1
             photo_file = await update.message.photo[photo_index].get_file()
             image_bytes = await photo_file.download_as_bytearray()
             contents.append({'mime_type': 'image/jpeg', 'data': bytes(image_bytes)})
 
+        # Если отправлен документ
         elif update.message.document:
             doc = update.message.document
             doc_file = await doc.get_file()
@@ -61,8 +64,10 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         contents.append(prompt)
 
+        # Запрос к Gemini
         response = model.generate_content(contents)
         
+        # Отправка ответа с поддержкой Markdown (с защитой от сбоев разметки)
         try:
             await status_msg.edit_text(response.text, parse_mode=ParseMode.MARKDOWN)
         except Exception:
@@ -72,6 +77,7 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"Произошла ошибка при обработке: {e}")
 
 async def main():
+    # Запускаем локальный веб-сервер для Render
     await start_web_server()
     
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -80,14 +86,22 @@ async def main():
 
     application = ApplicationBuilder().token(bot_token).build()
     
+    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     media_filter = filters.TEXT | filters.PHOTO | filters.Document.ALL
     application.add_handler(MessageHandler(media_filter & ~filters.COMMAND, handle_content))
 
-    async with application:
-        await application.start()
-        await application.updater.start_polling()
-        await asyncio.Event().wait()
+    # Запуск бота и пуллинга
+    print("Инициализация и запуск бота...")
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # Держим приложение активным
+    await asyncio.Event().wait()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
