@@ -26,6 +26,27 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+# Функция для отправки длинных сообщений частями (защита от Message_too_long)
+async def send_long_message(message, text):
+    max_length = 4000
+    if len(text) <= max_length:
+        try:
+            await message.edit_text(text, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await message.edit_text(text)
+        return
+
+    # Если текст длиннее 4000 символов, разбиваем его по частям
+    await message.edit_text("Ответ слишком длинный, отправляю частями:\n")
+    
+    for i in range(0, len(text), max_length):
+        chunk = text[i:i + max_length]
+        try:
+            await message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await message.reply_text(chunk)
+        await asyncio.sleep(0.3) # Небольшая пауза между сообщениями
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -48,14 +69,14 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = update.message.caption or update.message.text or "Опиши и проанализируй это изображение/документ."
         contents = []
 
-        # Если отправлено фото (берем оптимизированный размер для скорости)
+        # Если отправлено фото
         if update.message.photo:
             photo_index = -2 if len(update.message.photo) > 1 else -1
             photo_file = await update.message.photo[photo_index].get_file()
             image_bytes = await photo_file.download_as_bytearray()
             contents.append({'mime_type': 'image/jpeg', 'data': bytes(image_bytes)})
 
-        # Если отправлен документ
+        # Если отправлен документ (PDF и др.)
         elif update.message.document:
             doc = update.message.document
             doc_file = await doc.get_file()
@@ -67,17 +88,13 @@ async def handle_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Запрос к Gemini
         response = model.generate_content(contents)
         
-        # Отправка ответа с поддержкой Markdown (с защитой от сбоев разметки)
-        try:
-            await status_msg.edit_text(response.text, parse_mode=ParseMode.MARKDOWN)
-        except Exception:
-            await status_msg.edit_text(response.text)
+        # Безопасная отправка с разбиением на части
+        await send_long_message(status_msg, response.text)
 
     except Exception as e:
         await status_msg.edit_text(f"Произошла ошибка при обработке: {e}")
 
 async def main():
-    # Запускаем локальный веб-сервер для Render
     await start_web_server()
     
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -86,18 +103,15 @@ async def main():
 
     application = ApplicationBuilder().token(bot_token).build()
     
-    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     media_filter = filters.TEXT | filters.PHOTO | filters.Document.ALL
     application.add_handler(MessageHandler(media_filter & ~filters.COMMAND, handle_content))
 
-    # Запуск бота и пуллинга
     print("Инициализация и запуск бота...")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
     
-    # Держим приложение активным
     await asyncio.Event().wait()
 
 if __name__ == '__main__':
